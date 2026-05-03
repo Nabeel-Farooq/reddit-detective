@@ -2,7 +2,7 @@ site_name: reddit-detective
 site_url: https://reddit-detective.readthedocs.io/
 site_description: Play detective on Reddit
 
-repo_url: https://github.com/umitkaanusta/reddit-detective
+repo_url: https://github.com/Nabeel-Farooq/reddit-detective
 
 theme:
   name: readthedocs
