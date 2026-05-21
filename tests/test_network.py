@@ -1,53 +1,132 @@
-from neo4j import GraphDatabase
-from pprint import pprint
+import pytest
 from collections import Counter
 
-from tests import api_
-from reddit_detective import RedditNetwork, Comments, CommentsReplies
-from reddit_detective.data_models import Redditor, Submission
+from neo4j import GraphDatabase
+from neo4j.exceptions import Neo4jError
 
-driver_ = GraphDatabase.driver(
-    "bolt://localhost:7687",
-    auth=("neo4j", "test2")
+from tests import api_
+
+from reddit_detective import (
+    Comments,
+    CommentsReplies,
+    RedditNetwork,
 )
 
+from reddit_detective.data_models import (
+    Redditor,
+    Submission,
+)
 
-def test_network_creation():
-    net = RedditNetwork(
-        driver=driver_,
-        components=[
-            # Comments(Redditor(api_, "BloodMooseSquirrel", limit=5)),
-            Comments(Redditor(api_, "Anub_Rekhan", limit=5))
-        ]
+NEO4J_URI = "bolt://localhost:7687"
+NEO4J_USER = "neo4j"
+NEO4J_PASSWORD = "test2"
+
+TEST_USER = "Anub_Rekhan"
+TEST_SUBMISSION = "jpt7s7"
+
+
+@pytest.fixture(scope="module")
+def driver():
+    driver_instance = GraphDatabase.driver(
+        NEO4J_URI,
+        auth=(NEO4J_USER, NEO4J_PASSWORD),
     )
-    # assert net
-    # net.cypher_code()
-    net.run_cypher_code()
+
+    yield driver_instance
+
+    driver_instance.close()
 
 
-def test_code_uniqueness():
-    obj = CommentsReplies(Submission(api_, "jpt7s7", limit=None))
-    net = RedditNetwork(
-        driver=driver_,
+@pytest.fixture(scope="module")
+def network(driver):
+    return RedditNetwork(
+        driver=driver,
         components=[
-            obj
-        ]
+            Comments(
+                Redditor(
+                    api_,
+                    TEST_USER,
+                    limit=5,
+                )
+            )
+        ],
     )
+
+
+def test_network_creation(network):
+    try:
+        network.run_cypher_code()
+
+    except Neo4jError as err:
+        pytest.fail(f"Neo4j error occurred: {err}")
+
+    except Exception as err:
+        pytest.fail(f"Unexpected error occurred: {err}")
+
+
+def test_code_uniqueness(driver):
+    obj = CommentsReplies(
+        Submission(
+            api_,
+            TEST_SUBMISSION,
+            limit=None,
+        )
+    )
+
+    net = RedditNetwork(
+        driver=driver,
+        components=[obj],
+    )
+
     obj_code_list = obj.code()
     net_code_list = list(net._codes())
-    # if a submission's author has comments authored by themselves,
-    # merges of each such person will be 2 in obj_code_list and 1 in net_code_list
-    # that's why we do val <= 1
-    # we'll avoid that extra merge too in the coming update
+
+    diff_counter = (
+        Counter(obj_code_list) -
+        Counter(net_code_list)
+    )
+
     assert all(
-        val <= 1 for val in (Counter(obj_code_list) - Counter(net_code_list)).values()
+        value <= 1
+        for value in diff_counter.values()
     )
 
 
-def run():
-    # test_code_uniqueness()
-    test_network_creation()
+def test_network_codes_not_empty(driver):
+    obj = CommentsReplies(
+        Submission(
+            api_,
+            TEST_SUBMISSION,
+            limit=10,
+        )
+    )
+
+    net = RedditNetwork(
+        driver=driver,
+        components=[obj],
+    )
+
+    codes = list(net._codes())
+
+    assert codes is not None
+    assert isinstance(codes, list)
+    assert len(codes) > 0
 
 
-if __name__ == '__main__':
-    run()
+def test_database_connection(driver):
+    try:
+        with driver.session() as session:
+            result = session.run(
+                "RETURN 'connected' AS status"
+            )
+
+            record = result.single()
+
+            assert record["status"] == "connected"
+
+    except Neo4jError as err:
+        pytest.fail(f"Database connection failed: {err}")
+
+
+if __name__ == "__main__":
+    pytest.main([__file__])
